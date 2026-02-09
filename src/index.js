@@ -1,5 +1,6 @@
 const { getConfig } = require('./config');
 const { scrapeCalTransactions } = require('./scraper');
+const { categorize } = require('./categories');
 const {
   connectToSheet,
   ensureSheetStructure,
@@ -9,6 +10,23 @@ const {
   updateCategoryBreakdown,
   updateLastSync,
 } = require('./sheets');
+const { formatSheet } = require('./format');
+
+async function recategorizeExisting(txnSheet) {
+  const rows = await txnSheet.getRows();
+  let updated = 0;
+  for (const row of rows) {
+    const description = row.get('עסק') || '';
+    const currentCategory = row.get('קטגוריה') || '';
+    const newCategory = categorize(description);
+    if (currentCategory !== newCategory && (currentCategory === 'אחר' || !currentCategory)) {
+      row.set('קטגוריה', newCategory);
+      await row.save();
+      updated++;
+    }
+  }
+  return updated;
+}
 
 async function sync() {
   console.log('🔄 Starting sync...');
@@ -46,12 +64,25 @@ async function sync() {
   const result = await addTransactions(txnSheet, transactions, existingIds);
   console.log(`✅ Added ${result.added} new transactions (${result.skipped} already existed)`);
 
-  // Always update summaries (in case manual entries were added)
+  // Re-categorize any "אחר" transactions with improved rules
+  console.log('🏷️  Re-categorizing transactions...');
+  const recategorized = await recategorizeExisting(txnSheet);
+  if (recategorized > 0) console.log(`🏷️  Updated ${recategorized} categories`);
+
+  // Update summaries
   console.log('📈 Updating monthly summary...');
   await updateMonthlySummary(txnSheet, summarySheet, manualSheet, config.budget);
 
   console.log('📊 Updating category breakdown...');
   await updateCategoryBreakdown(txnSheet, categoriesSheet, manualSheet);
+
+  // Apply formatting
+  console.log('🎨 Applying sheet formatting...');
+  try {
+    await formatSheet(doc);
+  } catch (e) {
+    console.log('⚠️  Formatting partially applied:', e.message);
+  }
 
   // Update last sync timestamp
   await updateLastSync(settingsSheet);
