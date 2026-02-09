@@ -1,0 +1,20 @@
+{
+  "name": "chack1",
+  "version": "1.0.0",
+  "description": "Auto-track Cal credit card expenses in Google Sheets",
+  "main": "src/index.js",
+  "scripts": {
+    "sync": "node src/index.js",
+    "test": "node src/test-connection.js"
+  },
+  "dependencies": {
+    "israeli-bank-scrapers": "^0.67.0",
+    "google-spreadsheet": "^4.1.4",
+    "google-auth-library": "^9.14.0",
+    "puppeteer": "^23.0.0",
+    "dotenv": "^16.4.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
