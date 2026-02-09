@@ -6,6 +6,7 @@ const {
   getExistingIdentifiers,
   addTransactions,
   updateMonthlySummary,
+  updateCategoryBreakdown,
   updateLastSync,
 } = require('./sheets');
 
@@ -34,7 +35,8 @@ async function sync() {
   );
 
   // Ensure sheet structure
-  const { txnSheet, summarySheet, settingsSheet } = await ensureSheetStructure(doc, config.budget);
+  const { txnSheet, summarySheet, categoriesSheet, manualSheet, settingsSheet } =
+    await ensureSheetStructure(doc, config.budget);
 
   // Get existing identifiers for deduplication
   const existingIds = await getExistingIdentifiers(txnSheet);
@@ -44,11 +46,12 @@ async function sync() {
   const result = await addTransactions(txnSheet, transactions, existingIds);
   console.log(`✅ Added ${result.added} new transactions (${result.skipped} already existed)`);
 
-  // Update monthly summary
-  if (result.added > 0) {
-    console.log('📈 Updating monthly summary...');
-    await updateMonthlySummary(txnSheet, summarySheet, config.budget);
-  }
+  // Always update summaries (in case manual entries were added)
+  console.log('📈 Updating monthly summary...');
+  await updateMonthlySummary(txnSheet, summarySheet, manualSheet, config.budget);
+
+  console.log('📊 Updating category breakdown...');
+  await updateCategoryBreakdown(txnSheet, categoriesSheet, manualSheet);
 
   // Update last sync timestamp
   await updateLastSync(settingsSheet);
