@@ -6,6 +6,7 @@ async function scrapeCalTransactions({ username, password, startDate }) {
     startDate,
     combineInstallments: false,
     showBrowser: false,
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
   });
 
   const result = await scraper.scrape({ username, password });
