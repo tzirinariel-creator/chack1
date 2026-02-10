@@ -1,13 +1,16 @@
-// Sheet formatting - RTL, colors, clean layout
+// Sheet formatting - RTL, colors, column widths, pie charts
 // Uses google-auth-library JWT.request() for direct Google Sheets API calls
 
 const SHEETS_API = 'https://sheets.googleapis.com/v4/spreadsheets';
 
 const COLORS = {
-  headerBg: { red: 0.15, green: 0.35, blue: 0.6 },       // כחול כהה
-  headerText: { red: 1, green: 1, blue: 1 },               // לבן
-  altRowBg: { red: 0.93, green: 0.95, blue: 0.98 },        // תכלת בהיר
+  headerBg: { red: 0.15, green: 0.31, blue: 0.6 },
+  headerText: { red: 1, green: 1, blue: 1 },
+  altRow: { red: 0.94, green: 0.96, blue: 0.98 },
   white: { red: 1, green: 1, blue: 1 },
+  summaryBg: { red: 0.9, green: 0.93, blue: 0.98 },
+  greenText: { red: 0.15, green: 0.5, blue: 0.15 },
+  redText: { red: 0.7, green: 0.1, blue: 0.1 },
 };
 
 async function batchUpdate(auth, spreadsheetId, requests) {
@@ -18,33 +21,42 @@ async function batchUpdate(auth, spreadsheetId, requests) {
   });
 }
 
-async function formatSheet(doc, auth) {
+function addColumnWidths(requests, sheetId, widths) {
+  for (const [startIndex, pixelSize] of widths) {
+    requests.push({
+      updateDimensionProperties: {
+        range: { sheetId, dimension: 'COLUMNS', startIndex, endIndex: startIndex + 1 },
+        properties: { pixelSize },
+        fields: 'pixelSize',
+      },
+    });
+  }
+}
+
+async function formatSheet(doc, auth, monthlySheetInfo) {
   const spreadsheetId = doc.spreadsheetId;
   const requests = [];
 
+  // === GLOBAL: format all sheets ===
   for (const sheet of doc.sheetsByIndex) {
-    const sheetId = sheet.sheetId;
+    const sid = sheet.sheetId;
 
-    // Set RTL direction
+    // RTL
     requests.push({
       updateSheetProperties: {
-        properties: { sheetId, rightToLeft: true },
+        properties: { sheetId: sid, rightToLeft: true },
         fields: 'rightToLeft',
       },
     });
 
-    // Format header row - blue background, white bold text
+    // Header: blue background, white bold text, centered
     requests.push({
       repeatCell: {
-        range: { sheetId, startRowIndex: 0, endRowIndex: 1 },
+        range: { sheetId: sid, startRowIndex: 0, endRowIndex: 1 },
         cell: {
           userEnteredFormat: {
             backgroundColor: COLORS.headerBg,
-            textFormat: {
-              foregroundColor: COLORS.headerText,
-              bold: true,
-              fontSize: 11,
-            },
+            textFormat: { foregroundColor: COLORS.headerText, bold: true, fontSize: 11 },
             horizontalAlignment: 'CENTER',
             verticalAlignment: 'MIDDLE',
           },
@@ -53,94 +65,194 @@ async function formatSheet(doc, auth) {
       },
     });
 
-    // Freeze header row
+    // Freeze header + height
     requests.push({
       updateSheetProperties: {
-        properties: {
-          sheetId,
-          gridProperties: { frozenRowCount: 1 },
-        },
+        properties: { sheetId: sid, gridProperties: { frozenRowCount: 1 } },
         fields: 'gridProperties.frozenRowCount',
       },
     });
-
-    // Set header row height
     requests.push({
       updateDimensionProperties: {
-        range: { sheetId, dimension: 'ROWS', startIndex: 0, endIndex: 1 },
+        range: { sheetId: sid, dimension: 'ROWS', startIndex: 0, endIndex: 1 },
         properties: { pixelSize: 40 },
         fields: 'pixelSize',
       },
     });
   }
 
-  // Transactions sheet - auto resize + hide identifier column
+  // === MASTER: עסקאות sheet ===
   const txnSheet = doc.sheetsByTitle['עסקאות'];
   if (txnSheet) {
-    requests.push({
-      autoResizeDimensions: {
-        dimensions: { sheetId: txnSheet.sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 11 },
-      },
-    });
+    const sid = txnSheet.sheetId;
+    // Column widths: תאריך עסקה, תאריך חיוב, עסק, קטגוריה, סכום, סכום מקורי, מטבע, סטטוס, סוג, הערה, החזר?
+    addColumnWidths(requests, sid, [
+      [0, 110], [1, 110], [2, 250], [3, 120], [4, 100],
+      [5, 100], [6, 60], [7, 80], [8, 90], [9, 160], [10, 60],
+    ]);
+    // Hide מזהה column (11)
     requests.push({
       updateDimensionProperties: {
-        range: { sheetId: txnSheet.sheetId, dimension: 'COLUMNS', startIndex: 11, endIndex: 12 },
+        range: { sheetId: sid, dimension: 'COLUMNS', startIndex: 11, endIndex: 12 },
         properties: { hiddenByUser: true },
         fields: 'hiddenByUser',
       },
     });
+    // Number format for סכום column (4)
+    requests.push({
+      repeatCell: {
+        range: { sheetId: sid, startRowIndex: 1, startColumnIndex: 4, endColumnIndex: 5 },
+        cell: { userEnteredFormat: { numberFormat: { type: 'NUMBER', pattern: '#,##0.00' } } },
+        fields: 'userEnteredFormat.numberFormat',
+      },
+    });
   }
 
-  // Summary sheet - auto resize
+  // === SUMMARY: סיכום חודשי ===
   const summarySheet = doc.sheetsByTitle['סיכום חודשי'];
   if (summarySheet) {
-    requests.push({
-      autoResizeDimensions: {
-        dimensions: { sheetId: summarySheet.sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 6 },
-      },
-    });
+    addColumnWidths(requests, summarySheet.sheetId, [
+      [0, 100], [1, 130], [2, 100], [3, 100], [4, 100], [5, 120],
+    ]);
   }
 
-  // Categories sheet - auto resize
+  // === CATEGORIES: לפי קטגוריה ===
   const catSheet = doc.sheetsByTitle['לפי קטגוריה'];
   if (catSheet) {
+    addColumnWidths(requests, catSheet.sheetId, [
+      [0, 100], [1, 120], [2, 100], [3, 120], [4, 100],
+    ]);
+  }
+
+  // === MONTHLY SHEETS ===
+  for (const info of (monthlySheetInfo || [])) {
+    const sid = info.sheetId;
+
+    // Column widths: תאריך, עסק, קטגוריה, סכום, סוג, הערה, (gap), קטגוריה, סכום, אחוז
+    addColumnWidths(requests, sid, [
+      [0, 110], [1, 250], [2, 120], [3, 100], [4, 90], [5, 160],
+      [6, 30], [7, 120], [8, 100], [9, 80],
+    ]);
+
+    // Number format for transaction amount column (3)
     requests.push({
-      autoResizeDimensions: {
-        dimensions: { sheetId: catSheet.sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 5 },
+      repeatCell: {
+        range: { sheetId: sid, startRowIndex: 1, startColumnIndex: 3, endColumnIndex: 4 },
+        cell: { userEnteredFormat: { numberFormat: { type: 'NUMBER', pattern: '#,##0.00' } } },
+        fields: 'userEnteredFormat.numberFormat',
+      },
+    });
+
+    // Bold + background for budget summary section (columns H-I)
+    const sRow = info.summaryStartRow;
+    requests.push({
+      repeatCell: {
+        range: { sheetId: sid, startRowIndex: sRow, endRowIndex: sRow + 4, startColumnIndex: 7, endColumnIndex: 9 },
+        cell: {
+          userEnteredFormat: {
+            textFormat: { bold: true, fontSize: 11 },
+            backgroundColor: COLORS.summaryBg,
+          },
+        },
+        fields: 'userEnteredFormat(textFormat,backgroundColor)',
+      },
+    });
+
+    // Number format for category amount column (8)
+    requests.push({
+      repeatCell: {
+        range: { sheetId: sid, startRowIndex: 1, endRowIndex: info.categoryCount + 1, startColumnIndex: 8, endColumnIndex: 9 },
+        cell: { userEnteredFormat: { numberFormat: { type: 'NUMBER', pattern: '#,##0' } } },
+        fields: 'userEnteredFormat.numberFormat',
       },
     });
   }
 
-  // Send all formatting requests in one batch
+  // Send all formatting
   if (requests.length > 0) {
     await batchUpdate(auth, spreadsheetId, requests);
     console.log(`   Applied ${requests.length} formatting rules`);
   }
 
-  // Banding (alternating row colors) - separate call because it fails if already exists
+  // === BANDING for master sheet (try once, skip if exists) ===
   if (txnSheet) {
     try {
       await batchUpdate(auth, spreadsheetId, [{
         addBanding: {
           bandedRange: {
-            range: {
-              sheetId: txnSheet.sheetId,
-              startRowIndex: 0,
-              startColumnIndex: 0,
-              endColumnIndex: 11,
-            },
+            range: { sheetId: txnSheet.sheetId, startRowIndex: 0, startColumnIndex: 0, endColumnIndex: 11 },
             rowProperties: {
               headerColor: COLORS.headerBg,
               firstBandColor: COLORS.white,
-              secondBandColor: COLORS.altRowBg,
+              secondBandColor: COLORS.altRow,
             },
           },
         },
       }]);
-      console.log('   Applied alternating row colors');
     } catch (e) {
-      // Banding already exists from a previous run - that's fine
-      console.log('   Alternating row colors already applied');
+      // Already exists - that's fine
+    }
+  }
+
+  // === PIE CHARTS for new monthly sheets ===
+  const chartRequests = [];
+  for (const info of (monthlySheetInfo || [])) {
+    if (!info.isNew || info.categoryCount === 0) continue;
+
+    chartRequests.push({
+      addChart: {
+        chart: {
+          spec: {
+            title: 'חלוקת הוצאות לפי קטגוריה',
+            pieChart: {
+              legendPosition: 'LABELED_LEGEND',
+              domain: {
+                sourceRange: {
+                  sources: [{
+                    sheetId: info.sheetId,
+                    startRowIndex: 1,
+                    endRowIndex: 1 + info.categoryCount,
+                    startColumnIndex: 7,
+                    endColumnIndex: 8,
+                  }],
+                },
+              },
+              series: {
+                sourceRange: {
+                  sources: [{
+                    sheetId: info.sheetId,
+                    startRowIndex: 1,
+                    endRowIndex: 1 + info.categoryCount,
+                    startColumnIndex: 8,
+                    endColumnIndex: 9,
+                  }],
+                },
+              },
+              threeDimensional: false,
+            },
+          },
+          position: {
+            overlayPosition: {
+              anchorCell: {
+                sheetId: info.sheetId,
+                rowIndex: info.summaryStartRow + 5,
+                columnIndex: 6,
+              },
+              widthPixels: 620,
+              heightPixels: 400,
+            },
+          },
+        },
+      },
+    });
+  }
+
+  if (chartRequests.length > 0) {
+    try {
+      await batchUpdate(auth, spreadsheetId, chartRequests);
+      console.log(`   Added ${chartRequests.length} pie chart(s)`);
+    } catch (e) {
+      console.log('⚠️  Charts skipped:', e.message);
     }
   }
 }
