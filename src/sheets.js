@@ -40,7 +40,7 @@ async function connectToSheet(sheetId, serviceAccountEmail, privateKey) {
 
   const doc = new GoogleSpreadsheet(sheetId, auth);
   await doc.loadInfo();
-  return doc;
+  return { doc, auth };
 }
 
 async function ensureSheetStructure(doc, monthlyBudget) {

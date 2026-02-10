@@ -66,7 +66,7 @@ async function sync() {
 
   // Connect to Google Sheets
   console.log('📊 Connecting to Google Sheets...');
-  const doc = await connectToSheet(
+  const { doc, auth } = await connectToSheet(
     config.sheets.sheetId,
     config.sheets.serviceAccountEmail,
     config.sheets.privateKey
@@ -98,7 +98,7 @@ async function sync() {
 
   // Apply formatting
   console.log('🎨 Applying sheet formatting...');
-  await formatSheet(doc);
+  await formatSheet(doc, auth);
 
   // Update last sync timestamp
   await updateLastSync(settingsSheet);
