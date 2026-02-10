@@ -14,16 +14,36 @@ const { formatSheet } = require('./format');
 
 async function recategorizeExisting(txnSheet) {
   const rows = await txnSheet.getRows();
+  if (rows.length === 0) return 0;
+
+  // Find which rows need updating
+  const CATEGORY_COL = 3; // קטגוריה is column D (index 3)
+  const DESCRIPTION_COL = 2; // עסק is column C (index 2)
+
+  // Load cells for description and category columns
+  await txnSheet.loadCells({
+    startRowIndex: 1, // skip header
+    endRowIndex: rows.length + 1,
+    startColumnIndex: DESCRIPTION_COL,
+    endColumnIndex: CATEGORY_COL + 1,
+  });
+
   let updated = 0;
-  for (const row of rows) {
-    const description = row.get('עסק') || '';
-    const currentCategory = row.get('קטגוריה') || '';
+  for (let i = 0; i < rows.length; i++) {
+    const descCell = txnSheet.getCell(i + 1, DESCRIPTION_COL);
+    const catCell = txnSheet.getCell(i + 1, CATEGORY_COL);
+    const description = descCell.value || '';
+    const currentCategory = catCell.value || '';
     const newCategory = categorize(description);
+
     if (currentCategory !== newCategory && (currentCategory === 'אחר' || !currentCategory)) {
-      row.set('קטגוריה', newCategory);
-      await row.save();
+      catCell.value = newCategory;
       updated++;
     }
+  }
+
+  if (updated > 0) {
+    await txnSheet.saveUpdatedCells(); // single batch API call
   }
   return updated;
 }

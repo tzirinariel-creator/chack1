@@ -171,9 +171,9 @@ async function updateMonthlySummary(txnSheet, summarySheet, manualSheet, monthly
     months[monthKey] += t.amount;
   }
 
-  // Clear and rewrite
-  const existingRows = await summarySheet.getRows();
-  for (const row of existingRows) await row.delete();
+  // Clear and rewrite (single API call instead of deleting row by row)
+  await summarySheet.clear();
+  await summarySheet.setHeaderRow(['חודש', 'סה"כ הוצאות', 'יעד', 'יתרה', 'אחוז ניצול', 'סטטוס']);
 
   const sortedMonths = Object.keys(months).sort().reverse();
   const summaryRows = sortedMonths.map(month => {
@@ -218,9 +218,9 @@ async function updateCategoryBreakdown(txnSheet, categoriesSheet, manualSheet) {
     monthTotals[monthKey] += t.amount;
   }
 
-  // Clear and rewrite
-  const existingRows = await categoriesSheet.getRows();
-  for (const row of existingRows) await row.delete();
+  // Clear and rewrite (single API call instead of deleting row by row)
+  await categoriesSheet.clear();
+  await categoriesSheet.setHeaderRow(['חודש', 'קטגוריה', 'סה"כ', 'מספר עסקאות', 'אחוז מהחודש']);
 
   const rows = Object.entries(breakdown)
     .sort(([a], [b]) => b.localeCompare(a))
