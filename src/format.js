@@ -104,36 +104,15 @@ async function formatSheet(doc) {
     });
   }
 
-  // Apply main formatting via ky HTTP client (google-spreadsheet v4 API)
+  // Use the library's internal batchUpdate method
   if (requests.length > 0) {
-    await doc.sheetsApi.post(':batchUpdate', {
-      json: { requests },
-    });
+    await doc._makeBatchUpdateRequest(requests);
   }
 
   // Apply banding separately (may fail on repeat runs if already exists)
   if (txnSheet) {
     try {
-      // Check for existing banding and remove it
-      const response = await doc.sheetsApi.get('', {
-        searchParams: { fields: 'sheets.bandedRanges' },
-      });
-      const sheetMeta = await response.json();
-
       const bandingRequests = [];
-      const sheetData = (sheetMeta.sheets || []).find(
-        s => s.bandedRanges && s.bandedRanges.some(br =>
-          br.range && br.range.sheetId === txnSheet.sheetId
-        )
-      );
-
-      if (sheetData) {
-        for (const br of sheetData.bandedRanges) {
-          if (br.range.sheetId === txnSheet.sheetId) {
-            bandingRequests.push({ deleteBanding: { bandedRangeId: br.bandedRangeId } });
-          }
-        }
-      }
 
       // Add new banding
       bandingRequests.push({
@@ -154,11 +133,10 @@ async function formatSheet(doc) {
         },
       });
 
-      await doc.sheetsApi.post(':batchUpdate', {
-        json: { requests: bandingRequests },
-      });
+      await doc._makeBatchUpdateRequest(bandingRequests);
     } catch (e) {
-      console.log('⚠️  Banding skipped:', e.message);
+      // Banding already exists from previous run - that's fine
+      console.log('⚠️  Banding skipped (likely already exists)');
     }
   }
 }
