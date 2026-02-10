@@ -240,6 +240,150 @@ async function updateCategoryBreakdown(txnSheet, categoriesSheet, manualSheet) {
   if (rows.length > 0) await categoriesSheet.addRows(rows);
 }
 
+const HEBREW_MONTHS = [
+  'ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני',
+  'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר',
+];
+
+function getMonthSheetName(monthKey) {
+  const [year, month] = monthKey.split('-');
+  return `${HEBREW_MONTHS[parseInt(month) - 1]} ${year}`;
+}
+
+async function createMonthlySheets(doc, txnSheet, manualSheet, budget) {
+  const allRows = await txnSheet.getRows();
+
+  // Group all transactions by charge month
+  const monthlyData = {};
+  for (const row of allRows) {
+    const chargeDate = row.get('תאריך חיוב') || row.get('תאריך עסקה') || '';
+    if (!chargeDate) continue;
+    const monthKey = chargeDate.substring(0, 7);
+    if (!monthlyData[monthKey]) monthlyData[monthKey] = [];
+    monthlyData[monthKey].push({
+      date: row.get('תאריך עסקה') || '',
+      description: row.get('עסק') || '',
+      category: row.get('קטגוריה') || 'אחר',
+      amount: parseFloat(row.get('סכום (₪)')) || 0,
+      type: row.get('סוג') || '',
+      note: row.get('הערה') || '',
+      isRefund: (row.get('החזר?') || '').trim(),
+    });
+  }
+
+  // Add manual transactions
+  const manualRows = await manualSheet.getRows();
+  for (const row of manualRows) {
+    const date = row.get('תאריך') || '';
+    if (!date) continue;
+    const monthKey = date.substring(0, 7);
+    if (!monthlyData[monthKey]) monthlyData[monthKey] = [];
+    monthlyData[monthKey].push({
+      date,
+      description: row.get('תיאור') || '',
+      category: row.get('קטגוריה') || 'אחר',
+      amount: parseFloat(row.get('סכום (₪)')) || 0,
+      type: 'ידני',
+      note: row.get('הערה') || '',
+      isRefund: '',
+    });
+  }
+
+  const monthlySheetInfo = [];
+
+  for (const [monthKey, transactions] of Object.entries(monthlyData).sort(([a], [b]) => b.localeCompare(a))) {
+    const sheetName = getMonthSheetName(monthKey);
+
+    let sheet = doc.sheetsByTitle[sheetName];
+    const isNew = !sheet;
+    if (!sheet) {
+      sheet = await doc.addSheet({ title: sheetName });
+    } else {
+      await sheet.clear();
+    }
+
+    // Set transaction headers (columns A-F)
+    await sheet.setHeaderRow(['תאריך', 'עסק', 'קטגוריה', 'סכום (₪)', 'סוג', 'הערה']);
+
+    // Sort by date descending and write rows
+    transactions.sort((a, b) => b.date.localeCompare(a.date));
+    const rows = transactions.map(t => ({
+      'תאריך': t.date,
+      'עסק': t.description,
+      'קטגוריה': t.category,
+      'סכום (₪)': t.amount,
+      'סוג': t.type,
+      'הערה': t.isRefund ? '(החזר)' : (t.note || ''),
+    }));
+    if (rows.length > 0) await sheet.addRows(rows);
+
+    // Calculate category breakdown (exclude refunds + non-budget items)
+    const categoryTotals = {};
+    let total = 0;
+    for (const t of transactions) {
+      if (t.isRefund === 'כן' || t.isRefund === 'V' || t.isRefund === '✓') continue;
+      if (isExcludedFromBudget(t.description)) continue;
+      if (t.amount <= 0) continue;
+      if (!categoryTotals[t.category]) categoryTotals[t.category] = 0;
+      categoryTotals[t.category] += t.amount;
+      total += t.amount;
+    }
+    const catEntries = Object.entries(categoryTotals).sort((a, b) => b[1] - a[1]);
+
+    // Write category summary in columns H-J via cells
+    const cellRows = Math.max(catEntries.length + 7, 25);
+    await sheet.loadCells({
+      startRowIndex: 0,
+      endRowIndex: cellRows,
+      startColumnIndex: 7,
+      endColumnIndex: 10,
+    });
+
+    // Category headers
+    sheet.getCell(0, 7).value = 'קטגוריה';
+    sheet.getCell(0, 8).value = 'סכום';
+    sheet.getCell(0, 9).value = 'אחוז';
+
+    // Category data (rows 1-N, fixed range up to 25 rows for chart)
+    for (let i = 0; i < catEntries.length; i++) {
+      const [cat, amount] = catEntries[i];
+      const percent = total > 0 ? Math.round((amount / total) * 100) : 0;
+      sheet.getCell(i + 1, 7).value = cat;
+      sheet.getCell(i + 1, 8).value = Math.round(amount);
+      sheet.getCell(i + 1, 9).value = `${percent}%`;
+    }
+
+    // Budget summary below categories
+    const sRow = catEntries.length + 2;
+    sheet.getCell(sRow, 7).value = 'סה"כ הוצאות';
+    sheet.getCell(sRow, 8).value = Math.round(total);
+    sheet.getCell(sRow + 1, 7).value = 'יעד חודשי';
+    sheet.getCell(sRow + 1, 8).value = budget;
+    sheet.getCell(sRow + 2, 7).value = 'יתרה';
+    sheet.getCell(sRow + 2, 8).value = budget - Math.round(total);
+    const usagePercent = Math.round((total / budget) * 100);
+    let status;
+    if (usagePercent <= 70) status = `🟢 ${usagePercent}%`;
+    else if (usagePercent <= 90) status = `🟡 ${usagePercent}%`;
+    else if (usagePercent <= 100) status = `🟠 ${usagePercent}%`;
+    else status = `🔴 ${usagePercent}%`;
+    sheet.getCell(sRow + 3, 7).value = 'סטטוס';
+    sheet.getCell(sRow + 3, 8).value = status;
+
+    await sheet.saveUpdatedCells();
+
+    monthlySheetInfo.push({
+      sheetId: sheet.sheetId,
+      sheetName,
+      isNew,
+      categoryCount: catEntries.length,
+      summaryStartRow: sRow,
+    });
+  }
+
+  return monthlySheetInfo;
+}
+
 async function updateLastSync(settingsSheet) {
   const rows = await settingsSheet.getRows();
   const syncRow = rows.find(r => r.get('הגדרה') === 'עדכון אחרון');
@@ -257,4 +401,5 @@ module.exports = {
   updateMonthlySummary,
   updateCategoryBreakdown,
   updateLastSync,
+  createMonthlySheets,
 };

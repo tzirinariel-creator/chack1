@@ -9,6 +9,7 @@ const {
   updateMonthlySummary,
   updateCategoryBreakdown,
   updateLastSync,
+  createMonthlySheets,
 } = require('./sheets');
 const { formatSheet } = require('./format');
 
@@ -16,13 +17,11 @@ async function recategorizeExisting(txnSheet) {
   const rows = await txnSheet.getRows();
   if (rows.length === 0) return 0;
 
-  // Find which rows need updating
-  const CATEGORY_COL = 3; // קטגוריה is column D (index 3)
-  const DESCRIPTION_COL = 2; // עסק is column C (index 2)
+  const CATEGORY_COL = 3;
+  const DESCRIPTION_COL = 2;
 
-  // Load cells for description and category columns
   await txnSheet.loadCells({
-    startRowIndex: 1, // skip header
+    startRowIndex: 1,
     endRowIndex: rows.length + 1,
     startColumnIndex: DESCRIPTION_COL,
     endColumnIndex: CATEGORY_COL + 1,
@@ -43,7 +42,7 @@ async function recategorizeExisting(txnSheet) {
   }
 
   if (updated > 0) {
-    await txnSheet.saveUpdatedCells(); // single batch API call
+    await txnSheet.saveUpdatedCells();
   }
   return updated;
 }
@@ -89,16 +88,21 @@ async function sync() {
   const recategorized = await recategorizeExisting(txnSheet);
   if (recategorized > 0) console.log(`🏷️  Updated ${recategorized} categories`);
 
-  // Update summaries
+  // Create monthly sheets with category breakdowns
+  console.log('📅 Creating monthly sheets...');
+  const monthlySheetInfo = await createMonthlySheets(doc, txnSheet, manualSheet, config.budget);
+  console.log(`📅 Updated ${monthlySheetInfo.length} monthly sheets`);
+
+  // Update overview summaries
   console.log('📈 Updating monthly summary...');
   await updateMonthlySummary(txnSheet, summarySheet, manualSheet, config.budget);
 
   console.log('📊 Updating category breakdown...');
   await updateCategoryBreakdown(txnSheet, categoriesSheet, manualSheet);
 
-  // Apply formatting
-  console.log('🎨 Applying sheet formatting...');
-  await formatSheet(doc, auth);
+  // Apply formatting + charts
+  console.log('🎨 Applying formatting & charts...');
+  await formatSheet(doc, auth, monthlySheetInfo);
 
   // Update last sync timestamp
   await updateLastSync(settingsSheet);
