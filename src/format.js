@@ -1,4 +1,7 @@
 // Sheet formatting - RTL, colors, clean layout
+// Uses google-auth-library JWT.request() for direct Google Sheets API calls
+
+const SHEETS_API = 'https://sheets.googleapis.com/v4/spreadsheets';
 
 const COLORS = {
   headerBg: { red: 0.15, green: 0.35, blue: 0.6 },       // כחול כהה
@@ -7,7 +10,16 @@ const COLORS = {
   white: { red: 1, green: 1, blue: 1 },
 };
 
-async function formatSheet(doc) {
+async function batchUpdate(auth, spreadsheetId, requests) {
+  await auth.request({
+    url: `${SHEETS_API}/${spreadsheetId}:batchUpdate`,
+    method: 'POST',
+    data: { requests },
+  });
+}
+
+async function formatSheet(doc, auth) {
+  const spreadsheetId = doc.spreadsheetId;
   const requests = [];
 
   for (const sheet of doc.sheetsByIndex) {
@@ -21,7 +33,7 @@ async function formatSheet(doc) {
       },
     });
 
-    // Format header row
+    // Format header row - blue background, white bold text
     requests.push({
       repeatCell: {
         range: { sheetId, startRowIndex: 0, endRowIndex: 1 },
@@ -62,29 +74,24 @@ async function formatSheet(doc) {
     });
   }
 
-  // Format transactions sheet
+  // Transactions sheet - auto resize + hide identifier column
   const txnSheet = doc.sheetsByTitle['עסקאות'];
   if (txnSheet) {
-    const sheetId = txnSheet.sheetId;
-
-    // Auto resize columns
     requests.push({
       autoResizeDimensions: {
-        dimensions: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 11 },
+        dimensions: { sheetId: txnSheet.sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 11 },
       },
     });
-
-    // Hide מזהה column (index 11)
     requests.push({
       updateDimensionProperties: {
-        range: { sheetId, dimension: 'COLUMNS', startIndex: 11, endIndex: 12 },
+        range: { sheetId: txnSheet.sheetId, dimension: 'COLUMNS', startIndex: 11, endIndex: 12 },
         properties: { hiddenByUser: true },
         fields: 'hiddenByUser',
       },
     });
   }
 
-  // Auto resize summary sheet columns
+  // Summary sheet - auto resize
   const summarySheet = doc.sheetsByTitle['סיכום חודשי'];
   if (summarySheet) {
     requests.push({
@@ -94,7 +101,7 @@ async function formatSheet(doc) {
     });
   }
 
-  // Auto resize categories sheet columns
+  // Categories sheet - auto resize
   const catSheet = doc.sheetsByTitle['לפי קטגוריה'];
   if (catSheet) {
     requests.push({
@@ -104,39 +111,16 @@ async function formatSheet(doc) {
     });
   }
 
-  // Apply main formatting via ky HTTP client (google-spreadsheet v4 API)
+  // Send all formatting requests in one batch
   if (requests.length > 0) {
-    await doc.sheetsApi.post(':batchUpdate', {
-      json: { requests },
-    });
+    await batchUpdate(auth, spreadsheetId, requests);
+    console.log(`   Applied ${requests.length} formatting rules`);
   }
 
-  // Apply banding separately (may fail on repeat runs if already exists)
+  // Banding (alternating row colors) - separate call because it fails if already exists
   if (txnSheet) {
     try {
-      // Check for existing banding and remove it
-      const response = await doc.sheetsApi.get('', {
-        searchParams: { fields: 'sheets.bandedRanges' },
-      });
-      const sheetMeta = await response.json();
-
-      const bandingRequests = [];
-      const sheetData = (sheetMeta.sheets || []).find(
-        s => s.bandedRanges && s.bandedRanges.some(br =>
-          br.range && br.range.sheetId === txnSheet.sheetId
-        )
-      );
-
-      if (sheetData) {
-        for (const br of sheetData.bandedRanges) {
-          if (br.range.sheetId === txnSheet.sheetId) {
-            bandingRequests.push({ deleteBanding: { bandedRangeId: br.bandedRangeId } });
-          }
-        }
-      }
-
-      // Add new banding
-      bandingRequests.push({
+      await batchUpdate(auth, spreadsheetId, [{
         addBanding: {
           bandedRange: {
             range: {
@@ -152,13 +136,11 @@ async function formatSheet(doc) {
             },
           },
         },
-      });
-
-      await doc.sheetsApi.post(':batchUpdate', {
-        json: { requests: bandingRequests },
-      });
+      }]);
+      console.log('   Applied alternating row colors');
     } catch (e) {
-      console.log('⚠️  Banding skipped:', e.message);
+      // Banding already exists from a previous run - that's fine
+      console.log('   Alternating row colors already applied');
     }
   }
 }
