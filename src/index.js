@@ -98,11 +98,7 @@ async function sync() {
 
   // Apply formatting
   console.log('🎨 Applying sheet formatting...');
-  try {
-    await formatSheet(doc);
-  } catch (e) {
-    console.log('⚠️  Formatting partially applied:', e.message);
-  }
+  await formatSheet(doc);
 
   // Update last sync timestamp
   await updateLastSync(settingsSheet);

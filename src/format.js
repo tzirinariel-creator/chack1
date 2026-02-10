@@ -104,25 +104,24 @@ async function formatSheet(doc) {
     });
   }
 
-  // Apply main formatting
+  // Apply main formatting via ky HTTP client (google-spreadsheet v4 API)
   if (requests.length > 0) {
-    await doc.sheetsApi.spreadsheets.batchUpdate({
-      spreadsheetId: doc.spreadsheetId,
-      requestBody: { requests },
+    await doc.sheetsApi.post(':batchUpdate', {
+      json: { requests },
     });
   }
 
   // Apply banding separately (may fail on repeat runs if already exists)
   if (txnSheet) {
     try {
-      // First, check for existing banding and remove it
-      const sheetMeta = await doc.sheetsApi.spreadsheets.get({
-        spreadsheetId: doc.spreadsheetId,
-        fields: 'sheets.bandedRanges',
+      // Check for existing banding and remove it
+      const response = await doc.sheetsApi.get('', {
+        searchParams: { fields: 'sheets.bandedRanges' },
       });
+      const sheetMeta = await response.json();
 
       const bandingRequests = [];
-      const sheetData = sheetMeta.data.sheets.find(
+      const sheetData = (sheetMeta.sheets || []).find(
         s => s.bandedRanges && s.bandedRanges.some(br =>
           br.range && br.range.sheetId === txnSheet.sheetId
         )
@@ -155,9 +154,8 @@ async function formatSheet(doc) {
         },
       });
 
-      await doc.sheetsApi.spreadsheets.batchUpdate({
-        spreadsheetId: doc.spreadsheetId,
-        requestBody: { requests: bandingRequests },
+      await doc.sheetsApi.post(':batchUpdate', {
+        json: { requests: bandingRequests },
       });
     } catch (e) {
       console.log('⚠️  Banding skipped:', e.message);
