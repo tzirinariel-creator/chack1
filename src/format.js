@@ -4,10 +4,6 @@ const COLORS = {
   headerBg: { red: 0.15, green: 0.35, blue: 0.6 },       // כחול כהה
   headerText: { red: 1, green: 1, blue: 1 },               // לבן
   altRowBg: { red: 0.93, green: 0.95, blue: 0.98 },        // תכלת בהיר
-  greenBg: { red: 0.85, green: 0.95, blue: 0.85 },         // ירוק בהיר
-  yellowBg: { red: 1, green: 0.97, blue: 0.8 },            // צהוב בהיר
-  orangeBg: { red: 1, green: 0.9, blue: 0.8 },             // כתום בהיר
-  redBg: { red: 1, green: 0.85, blue: 0.85 },              // אדום בהיר
   white: { red: 1, green: 1, blue: 1 },
 };
 
@@ -66,7 +62,7 @@ async function formatSheet(doc) {
     });
   }
 
-  // Format transactions sheet - hide "מזהה" column (last column)
+  // Format transactions sheet
   const txnSheet = doc.sheetsByTitle['עסקאות'];
   if (txnSheet) {
     const sheetId = txnSheet.sheetId;
@@ -86,52 +82,86 @@ async function formatSheet(doc) {
         fields: 'hiddenByUser',
       },
     });
-
-    // Alternating row colors for data rows
-    requests.push({
-      addBanding: {
-        bandedRange: {
-          sheetId,
-          range: { sheetId, startRowIndex: 0, startColumnIndex: 0, endColumnIndex: 11 },
-          rowProperties: {
-            headerColor: COLORS.headerBg,
-            firstBandColor: COLORS.white,
-            secondBandColor: COLORS.altRowBg,
-          },
-        },
-      },
-    });
   }
 
-  // Format summary sheet with conditional coloring
+  // Auto resize summary sheet columns
   const summarySheet = doc.sheetsByTitle['סיכום חודשי'];
   if (summarySheet) {
-    const sheetId = summarySheet.sheetId;
-
     requests.push({
       autoResizeDimensions: {
-        dimensions: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 6 },
+        dimensions: { sheetId: summarySheet.sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 6 },
       },
     });
   }
 
-  // Format categories sheet
+  // Auto resize categories sheet columns
   const catSheet = doc.sheetsByTitle['לפי קטגוריה'];
   if (catSheet) {
-    const sheetId = catSheet.sheetId;
-
     requests.push({
       autoResizeDimensions: {
-        dimensions: { sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 5 },
+        dimensions: { sheetId: catSheet.sheetId, dimension: 'COLUMNS', startIndex: 0, endIndex: 5 },
       },
     });
   }
 
+  // Apply main formatting
   if (requests.length > 0) {
     await doc.sheetsApi.spreadsheets.batchUpdate({
       spreadsheetId: doc.spreadsheetId,
       requestBody: { requests },
     });
+  }
+
+  // Apply banding separately (may fail on repeat runs if already exists)
+  if (txnSheet) {
+    try {
+      // First, check for existing banding and remove it
+      const sheetMeta = await doc.sheetsApi.spreadsheets.get({
+        spreadsheetId: doc.spreadsheetId,
+        fields: 'sheets.bandedRanges',
+      });
+
+      const bandingRequests = [];
+      const sheetData = sheetMeta.data.sheets.find(
+        s => s.bandedRanges && s.bandedRanges.some(br =>
+          br.range && br.range.sheetId === txnSheet.sheetId
+        )
+      );
+
+      if (sheetData) {
+        for (const br of sheetData.bandedRanges) {
+          if (br.range.sheetId === txnSheet.sheetId) {
+            bandingRequests.push({ deleteBanding: { bandedRangeId: br.bandedRangeId } });
+          }
+        }
+      }
+
+      // Add new banding
+      bandingRequests.push({
+        addBanding: {
+          bandedRange: {
+            range: {
+              sheetId: txnSheet.sheetId,
+              startRowIndex: 0,
+              startColumnIndex: 0,
+              endColumnIndex: 11,
+            },
+            rowProperties: {
+              headerColor: COLORS.headerBg,
+              firstBandColor: COLORS.white,
+              secondBandColor: COLORS.altRowBg,
+            },
+          },
+        },
+      });
+
+      await doc.sheetsApi.spreadsheets.batchUpdate({
+        spreadsheetId: doc.spreadsheetId,
+        requestBody: { requests: bandingRequests },
+      });
+    } catch (e) {
+      console.log('⚠️  Banding skipped:', e.message);
+    }
   }
 }
 
