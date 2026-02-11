@@ -393,6 +393,16 @@ async function updateLastSync(settingsSheet) {
   }
 }
 
+async function addManualTransaction(manualSheet, { description, amount, category, note }) {
+  await manualSheet.addRow({
+    'תאריך': new Date().toISOString().split('T')[0],
+    'תיאור': description,
+    'קטגוריה': category,
+    'סכום (₪)': amount,
+    'הערה': note || '',
+  });
+}
+
 module.exports = {
   connectToSheet,
   ensureSheetStructure,
@@ -402,4 +412,5 @@ module.exports = {
   updateCategoryBreakdown,
   updateLastSync,
   createMonthlySheets,
+  addManualTransaction,
 };
