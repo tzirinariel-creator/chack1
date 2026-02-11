@@ -1,6 +1,6 @@
 const { getConfig } = require('./config');
 const { scrapeCalTransactions } = require('./scraper');
-const { categorize } = require('./categories');
+const { categorize, isExcludedFromBudget } = require('./categories');
 const {
   connectToSheet,
   ensureSheetStructure,
@@ -12,6 +12,7 @@ const {
   createMonthlySheets,
 } = require('./sheets');
 const { formatSheet } = require('./format');
+const { sendMessage, buildSyncMessage, buildErrorMessage } = require('./telegram');
 
 async function recategorizeExisting(txnSheet) {
   const rows = await txnSheet.getRows();
@@ -47,6 +48,23 @@ async function recategorizeExisting(txnSheet) {
   return updated;
 }
 
+function getCurrentMonthBudgetInfo(transactions, budget) {
+  const now = new Date();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  let total = 0;
+
+  for (const t of transactions) {
+    const chargeDate = t.processedDate || t.date || '';
+    if (!chargeDate.startsWith(currentMonth)) continue;
+    if (isExcludedFromBudget(t.description)) continue;
+    total += Math.abs(t.amount);
+  }
+
+  const remaining = budget - Math.round(total);
+  const usagePercent = Math.round((total / budget) * 100);
+  return { total: Math.round(total), budget, remaining, usagePercent };
+}
+
 async function sync() {
   console.log('🔄 Starting sync...');
   const config = getConfig();
@@ -79,6 +97,9 @@ async function sync() {
   const existingIds = await getExistingIdentifiers(txnSheet);
   console.log(`📋 Found ${existingIds.size} existing transactions in sheet`);
 
+  // Find new transactions before adding
+  const newTransactions = transactions.filter(t => !existingIds.has(t.identifier));
+
   // Add new transactions
   const result = await addTransactions(txnSheet, transactions, existingIds);
   console.log(`✅ Added ${result.added} new transactions (${result.skipped} already existed)`);
@@ -107,11 +128,39 @@ async function sync() {
   // Update last sync timestamp
   await updateLastSync(settingsSheet);
 
+  // Send Telegram notification (if configured)
+  const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
+  const telegramChatId = process.env.TELEGRAM_CHAT_ID;
+
+  if (telegramToken && telegramChatId) {
+    console.log('📱 Sending Telegram notification...');
+    try {
+      const budgetInfo = getCurrentMonthBudgetInfo(transactions, config.budget);
+      const message = buildSyncMessage(result.added, newTransactions, budgetInfo);
+      await sendMessage(telegramToken, telegramChatId, message);
+      console.log('📱 Telegram notification sent!');
+    } catch (e) {
+      console.log('⚠️  Telegram notification failed:', e.message);
+    }
+  }
+
   console.log('🎉 Sync complete!');
   return result;
 }
 
-sync().catch(err => {
+sync().catch(async err => {
   console.error('❌ Sync failed:', err.message);
+
+  // Send error alert to Telegram
+  const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
+  const telegramChatId = process.env.TELEGRAM_CHAT_ID;
+  if (telegramToken && telegramChatId) {
+    try {
+      await sendMessage(telegramToken, telegramChatId, buildErrorMessage(err));
+    } catch (e) {
+      console.error('⚠️  Could not send error alert to Telegram:', e.message);
+    }
+  }
+
   process.exit(1);
 });

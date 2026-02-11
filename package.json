@@ -5,6 +5,7 @@
   "main": "src/index.js",
   "scripts": {
     "sync": "node src/index.js",
+    "weekly": "node src/weekly-summary.js",
     "test": "node src/test-connection.js"
   },
   "dependencies": {
