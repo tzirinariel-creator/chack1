@@ -4,11 +4,11 @@
 const SHEETS_API = 'https://sheets.googleapis.com/v4/spreadsheets';
 
 const COLORS = {
-  headerBg: { red: 0.15, green: 0.31, blue: 0.6 },
+  headerBg: { red: 0.067, green: 0.333, blue: 0.8 },   // #1155CC
   headerText: { red: 1, green: 1, blue: 1 },
-  altRow: { red: 0.94, green: 0.96, blue: 0.98 },
+  altRow: { red: 0.93, green: 0.95, blue: 0.98 },        // Light blue-gray zebra
   white: { red: 1, green: 1, blue: 1 },
-  summaryBg: { red: 0.9, green: 0.93, blue: 0.98 },
+  summaryBg: { red: 0.85, green: 0.9, blue: 0.98 },
   greenText: { red: 0.15, green: 0.5, blue: 0.15 },
   redText: { red: 0.7, green: 0.1, blue: 0.1 },
 };
@@ -181,6 +181,27 @@ async function formatSheet(doc, auth, monthlySheetInfo) {
         addBanding: {
           bandedRange: {
             range: { sheetId: txnSheet.sheetId, startRowIndex: 0, startColumnIndex: 0, endColumnIndex: 11 },
+            rowProperties: {
+              headerColor: COLORS.headerBg,
+              firstBandColor: COLORS.white,
+              secondBandColor: COLORS.altRow,
+            },
+          },
+        },
+      }]);
+    } catch (e) {
+      // Already exists - that's fine
+    }
+  }
+
+  // === BANDING for monthly sheets ===
+  for (const info of (monthlySheetInfo || [])) {
+    if (!info.isNew) continue;
+    try {
+      await batchUpdate(auth, spreadsheetId, [{
+        addBanding: {
+          bandedRange: {
+            range: { sheetId: info.sheetId, startRowIndex: 0, startColumnIndex: 0, endColumnIndex: 6 },
             rowProperties: {
               headerColor: COLORS.headerBg,
               firstBandColor: COLORS.white,
